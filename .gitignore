@@ -7,3 +7,4 @@ node_modules/
 ui/dist/
 data/resumes.jsonl
 data/golden.jsonl
+md_to_resume_pdf.py
