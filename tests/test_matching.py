@@ -187,7 +187,18 @@ def test_missing_similarity_redistributes_weight_instead_of_scoring_zero():
     as 0.0 silently dragged the headline down and was indistinguishable from a
     genuinely irrelevant resume.
     """
-    r = match_resume_to_job(RESUME, JD, bundle=None)
+    # Semantic similarity needs no bundle, so it has to be disabled too for
+    # this to exercise the "no relevance signal at all" path.
+    import semantic
+
+    real = semantic.get_model
+    semantic.get_model = lambda: None
+    try:
+        r = match_resume_to_job(RESUME, JD, bundle=None)
+    finally:
+        semantic.get_model = real
+        semantic._model.cache_clear()
+
     assert r["components"]["relevance"] is None
     assert r["text_similarity"] is None
     # Skills and experience alone still produce a sensible score.
@@ -225,3 +236,22 @@ def test_pdf_ligatures_are_normalised():
 def test_smart_quotes_normalised():
     from documents import _clean
     assert "don't" in _clean("don’t").lower()
+
+
+def test_project_demonstrated_skills_are_not_called_weakly_evidenced():
+    """A skill proven in a project must not be reported as merely listed."""
+    resume = ("Alex\nPROJECTS\nResume Scorer - ML system, 2026\n"
+              "- Trained LightGBM models in Python reaching AUC 0.91\n"
+              "SKILLS\nPython, LightGBM")
+    r = match_resume_to_job(resume, "Requirements:\n- Strong Python\n- LightGBM")
+    assert "python" not in r["weakly_evidenced"]
+    assert "python" in r["matched_required"]
+
+
+def test_resume_headline_counts_for_title_match():
+    """A career-switcher's target title appears in the headline before it ever
+    appears as a job title."""
+    from matching import job_title_match
+    resume = ("Alex Chen\nSoftware Engineer - Backend & ML Systems\n"
+              "EXPERIENCE\nJava Developer - Acme\nJan 2020 - Present\n- built things")
+    assert job_title_match(resume, "Machine Learning Engineer\nRequirements:") > 0.3

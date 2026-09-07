@@ -102,3 +102,23 @@ def test_no_implication_loops():
         assert skill not in implied, f"{skill} implies itself"
         for other in implied:
             assert skill not in IMPLIES.get(other, []), f"cycle: {skill} <-> {other}"
+
+
+def test_project_bullets_count_as_evidence():
+    """Regression: `analyse_skills` accepted a projects argument that no caller
+    ever passed, so a candidate whose strongest evidence lived in a PROJECTS
+    section had it scored at the weakest tier — the normal case for anyone
+    switching fields."""
+    listed = analyse_skills("skills: pytorch")
+    from_project = analyse_skills(
+        "skills: pytorch",
+        project_roles=[("- Trained a PyTorch ranking model, lifting CTR 22%", 2026)])
+    assert from_project["pytorch"].evidence > listed["pytorch"].evidence
+    assert from_project["pytorch"].strength > listed["pytorch"].strength * 1.8
+
+
+def test_project_evidence_is_discounted_below_professional_work():
+    job = analyse_skills("", roles=[("- Cut latency 40% with Kubernetes", 2026)])
+    proj = analyse_skills("", project_roles=[("- Cut latency 40% with Kubernetes", 2026)])
+    assert proj["kubernetes"].evidence < job["kubernetes"].evidence
+    assert proj["kubernetes"].evidence > 0

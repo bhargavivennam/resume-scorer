@@ -20,3 +20,19 @@ python-multipart>=0.0.9
 # Tests
 pytest>=8.0
 httpx>=0.27
+
+# ---------------------------------------------------------------------------
+# Optional. Everything above is enough to run the whole project; each extra
+# below turns on one feature and degrades to a no-op when absent.
+# ---------------------------------------------------------------------------
+
+# Semantic matching (semantic.py). OFF unless RESUME_SCORER_SEMANTIC=1.
+# Measured worth ~1 point on a real resume/posting pair, and torch conflicts
+# with LightGBM's OpenMP runtime on macOS - run its tests separately:
+#   pytest tests --ignore=tests/test_semantic.py
+#   pytest tests/test_semantic.py
+# sentence-transformers>=3.0
+
+# LLM matching (llm_matcher.py, compare_matchers.py). Needs ANTHROPIC_API_KEY.
+# Costs real money per call.
+# anthropic>=1.0

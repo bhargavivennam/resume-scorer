@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+import semantic
 from skills import EVIDENCE_EXPERIENCE, SkillSignal, find_skills
 
 # Lines that introduce a requirements block.
@@ -99,7 +100,13 @@ def extract_requirements(job_text: str, max_items: int = 12) -> List[str]:
             if len(body.split()) > 60:
                 in_section = False
                 continue
-            if 3 <= len(body.split()) <= MAX_REQUIREMENT_WORDS and not _NOISE_RE.search(body):
+            n_words = len(body.split())
+            # The 3-word floor exists to drop fragments, but it was also
+            # dropping real requirements: "Strong Python" is two words and is
+            # the most important line in plenty of postings. Any line naming a
+            # skill is kept regardless of length.
+            long_enough = n_words >= 3 or bool(find_skills(body))
+            if long_enough and n_words <= MAX_REQUIREMENT_WORDS and not _NOISE_RE.search(body):
                 bullets.append(body)
 
     if not bullets:  # unstructured posting: fall back to sentences
@@ -176,9 +183,10 @@ def score_requirements(
             best = max(
                 (u for u in units if find_skills(u) & req_skills),
                 key=lambda u: len(find_skills(u) & req_skills), default=None)
-        # 2. Otherwise fall back to word overlap with the best-matching bullet.
-        #    Crude, but it's the difference between scoring the requirement and
-        #    pretending it doesn't exist.
+        # 2. No named skill: compare MEANING against the resume's bullets.
+        #    "Comfortable owning services in production" and "handled L3
+        #    production incidents and on-call rotations" say the same thing and
+        #    share two words; word overlap scored that 0.
         else:
             best_i, best_overlap = -1, 0.0
             for i, toks in enumerate(unit_tokens):
@@ -188,11 +196,23 @@ def score_requirements(
                 if overlap > best_overlap:
                     best_i, best_overlap = i, overlap
             whole = len(req_tokens & resume_tokens) / len(req_tokens) if req_tokens else 0.0
-            # Blend: a single bullet covering it is stronger evidence than the
-            # same words scattered across the document.
-            score = min(1.0, 0.7 * best_overlap * 2.0 + 0.3 * whole)
-            basis = "language"
-            best = units[best_i] if best_i >= 0 and best_overlap > 0.15 else None
+            lexical = min(1.0, 0.7 * best_overlap * 2.0 + 0.3 * whole)
+
+            match = semantic.best_match(req, units)
+            if match is not None:
+                sem_i, sem_raw = match
+                sem = semantic.rescale(sem_raw)
+                # Take the better of the two rather than averaging: lexical and
+                # semantic each catch cases the other misses, and a requirement
+                # covered by either reading is genuinely covered.
+                if sem >= lexical:
+                    score, basis, best_i = sem, "meaning", sem_i
+                else:
+                    score, basis = lexical, "language"
+                best = units[best_i] if best_i >= 0 and score > 0.25 else None
+            else:
+                score, basis = lexical, "language"
+                best = units[best_i] if best_i >= 0 and best_overlap > 0.15 else None
 
         verdict = (VERDICT_STRONG if score >= 0.6 else
                    VERDICT_PARTIAL if score >= 0.3 else VERDICT_NONE)

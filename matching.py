@@ -26,10 +26,12 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from features import extract_features, parse_roles
+import semantic
+from features import extract_features, parse_projects, parse_roles
 from requirements import score_requirements
 from skills import (EVIDENCE_EXPERIENCE, EVIDENCE_QUANTIFIED, ONTOLOGY,
-                    analyse_skills, find_skills, group_of)
+                    PROJECT_EVIDENCE_FACTOR, analyse_skills, find_skills,
+                    group_of)
 
 # Phrases that mark a skill as a hard requirement rather than a nice-to-have.
 _REQUIRED_MARKERS = re.compile(
@@ -141,8 +143,15 @@ def job_title_match(resume_text: str, job_text: str) -> Optional[float]:
     if not jd_title:
         return None
 
-    # Compare against every dated role header on the resume, take the best.
+    # The resume's own headline ("Software Engineer - Backend & ML Systems")
+    # is a title too, and often the most current one — a career-switcher's
+    # target title lives there before it ever appears as a job title.
     best = 0.0
+    for headline in [ln.strip() for ln in (resume_text or "").splitlines()[:4] if ln.strip()]:
+        tokens = _title_tokens(headline)
+        if tokens:
+            best = max(best, len(jd_title & tokens) / len(jd_title))
+
     for role_text, _ in parse_roles(resume_text):
         header = role_text.splitlines()[0] if role_text.splitlines() else ""
         tokens = _title_tokens(header)
@@ -205,8 +214,12 @@ def match_resume_to_job(
     # bullet with a measured outcome counts far more than one typed into a
     # keyword list — which is exactly the gap ATS keyword matching leaves open.
     roles = parse_roles(resume_text)
+    projects = parse_projects(resume_text)
     signals = analyse_skills(
-        (resume_text or "").lower(), roles=[(r.lower(), y) for r, y in roles])
+        (resume_text or "").lower(),
+        roles=[(r.lower(), y) for r, y in roles],
+        project_roles=[(p.lower(), y) for p, y in projects],
+    )
     resume_skills = set(signals)
     req_skills, pref_skills = _classify_requirements(job_text)
 
@@ -244,8 +257,13 @@ def match_resume_to_job(
 
     # Which matched skills are merely claimed rather than shown — the single
     # most actionable line of feedback we can give.
+    # Threshold accounts for the project discount: a skill demonstrated in a
+    # project scores EVIDENCE_EXPERIENCE * PROJECT_EVIDENCE_FACTOR, which sits
+    # just under the raw threshold. Without this, skills the resume genuinely
+    # demonstrates were still reported as "listed but not demonstrated".
+    _DEMONSTRATED = EVIDENCE_EXPERIENCE * PROJECT_EVIDENCE_FACTOR
     weakly_evidenced = sorted(
-        sk for sk in matched_req if signals[sk].evidence < EVIDENCE_EXPERIENCE)
+        sk for sk in matched_req if signals[sk].evidence < _DEMONSTRATED)
     stale = sorted(sk for sk in matched_req if signals[sk].recency < 0.35)
 
     feats = extract_features(resume_text)
@@ -263,6 +281,11 @@ def match_resume_to_job(
         years_note = f"Short of the {need_years}-year requirement ({have_years:.1f} years)."
 
     similarity = _tfidf_similarity(resume_text, job_text, bundle)
+    # Prefer meaning over token overlap for the relevance component when the
+    # encoder is available; TF-IDF cosine stays the fallback.
+    sem_overall = semantic.similarity(resume_text[:6000], job_text[:6000])
+    if sem_overall is not None:
+        similarity = semantic.rescale(sem_overall, floor=0.15, ceiling=0.65)
 
     # Requirement-level coverage: scores every line of the posting, including
     # the majority that name no skill at all ("mentoring engineers", "owning
@@ -292,7 +315,15 @@ def match_resume_to_job(
     # its weight across the other two components instead of treating it as a
     # zero. Scoring an *unmeasured* dimension as 0 silently drags the headline
     # down and looks identical to a genuinely irrelevant resume.
-    sim_component = None if similarity is None else min(similarity * 2.5, 1.0)
+    # The 2.5x boost existed to stretch a raw TF-IDF cosine (which is tiny for
+    # two documents of different genres). A rescaled semantic score is already
+    # on a 0-1 scale, so boosting it again would peg every resume at 100%.
+    if similarity is None:
+        sim_component = None
+    elif sem_overall is not None:
+        sim_component = similarity
+    else:
+        sim_component = min(similarity * 2.5, 1.0)
     title = job_title_match(resume_text, job_text)
     education = education_match(resume_text, job_text)
 

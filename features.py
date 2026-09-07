@@ -166,6 +166,52 @@ _OTHER_HEADER_RE = re.compile(
 )
 
 
+_PROJECT_HEADER_RE = re.compile(
+    r"^\s*(personal\s+|side\s+|selected\s+)?(projects?|portfolio)\b.*$", re.I | re.M)
+
+
+def project_block(text: str) -> Optional[str]:
+    """The PROJECTS section, or None.
+
+    This existed as an unused parameter for a long time: `analyse_skills`
+    accepted a `project_section` and no caller ever passed one. The effect was
+    that a candidate whose strongest evidence lived in a projects section — the
+    normal case for anyone switching fields — had that section scored as
+    "merely listed", the weakest evidence tier.
+    """
+    start = _PROJECT_HEADER_RE.search(text or "")
+    if not start:
+        return None
+    nxt = _OTHER_HEADER_RE.search(text, start.end())
+    exp = _EXP_HEADER_RE.search(text, start.end())
+    ends = [m.start() for m in (nxt, exp) if m]
+    return text[start.end(): min(ends) if ends else len(text)]
+
+
+def parse_projects(text: str) -> List[Tuple[str, Optional[int]]]:
+    """Split the projects section into (project_text, year) pairs.
+
+    Projects are treated like roles so their bullets earn evidence the same way
+    work bullets do — a project bullet stating a measured result is real proof
+    the skill was used, not a keyword.
+    """
+    block = project_block(text)
+    if not block:
+        return []
+
+    # The whole section is treated as ONE entry, dated by the latest year in it.
+    #
+    # Splitting it per project was tempting but fragile: PDF extraction wraps
+    # long bullets onto unprefixed continuation lines, which are indistinguish-
+    # able from a new project's title line, and every heuristic split half the
+    # bullets off their own project. It also buys nothing — `analyse_skills`
+    # scores evidence line by line regardless, so the entry boundary only
+    # decides which year attaches. Using the latest year across the section is
+    # marginally generous and far more robust.
+    years = re.findall(r"\b(?:19|20)\d{2}\b", block)
+    return [(block, int(years[-1]) if years else None)]
+
+
 def experience_block(text: str) -> Optional[str]:
     """The work-history block exactly as written, or None if there isn't one.
 
@@ -278,7 +324,12 @@ def extract_features(resume_text: str) -> Dict[str, float]:
     # Grade every skill by WHERE it appears and HOW RECENTLY, not just whether
     # it appears — the difference between this and keyword search.
     roles = parse_roles(resume_text or "")
-    signals = analyse_skills(text, roles=[(r.lower(), y) for r, y in roles])
+    projects = parse_projects(resume_text or "")
+    signals = analyse_skills(
+        text,
+        roles=[(r.lower(), y) for r, y in roles],
+        project_roles=[(p.lower(), y) for p, y in projects],
+    )
     n_skills, n_groups, per_group = _count_skill_hits(signals)
     strengths = [s.strength for s in signals.values()] or [0.0]
 

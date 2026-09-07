@@ -126,3 +126,12 @@ def test_golden_loader_expands_grades_into_pairs(tmp_path):
 def test_golden_loader_handles_missing_file(tmp_path):
     pairs, graded = load_golden(tmp_path / "nope.jsonl")
     assert pairs == [] and graded == []
+
+
+def test_short_skill_requirements_are_not_dropped():
+    """Regression: a 3-word minimum silently discarded "Strong Python", which
+    is the most important line in many postings."""
+    kept = extract_requirements(
+        "Requirements:\n- Strong Python\n- Kubernetes\n- Go\n- 5+ years of experience\n")
+    joined = " ".join(kept).lower()
+    assert "python" in joined and "kubernetes" in joined

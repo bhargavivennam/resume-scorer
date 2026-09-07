@@ -313,11 +313,16 @@ def _recency_weight(last_year: Optional[int], reference_year: int = REFERENCE_YE
     return math.pow(0.5, years_ago / RECENCY_HALFLIFE_YEARS)
 
 
+# Projects are real evidence, but professional work carries a little more
+# weight, so project evidence is scaled rather than counted identically.
+PROJECT_EVIDENCE_FACTOR = 0.85
+
+
 def analyse_skills(
     text: str,
     roles: Optional[Sequence[Tuple[str, Optional[int]]]] = None,
     skills_section: str = "",
-    project_section: str = "",
+    project_roles: Optional[Sequence[Tuple[str, Optional[int]]]] = None,
 ) -> Dict[str, SkillSignal]:
     """Grade every skill on the resume by evidence and recency.
 
@@ -348,8 +353,17 @@ def analyse_skills(
             for skill in found:
                 bump(skill, level, end_year)
 
-    for skill in find_skills(project_section):
-        bump(skill, EVIDENCE_PROJECT, None)
+    # Project bullets earn evidence exactly like work bullets — a project
+    # bullet stating a measured result proves the skill was used — scaled by
+    # PROJECT_EVIDENCE_FACTOR.
+    for project_text, year in (project_roles or []):
+        for line in project_text.splitlines():
+            found = find_skills(line)
+            if not found:
+                continue
+            level = EVIDENCE_QUANTIFIED if _QUANTIFIED_RE.search(line) else EVIDENCE_EXPERIENCE
+            for skill in found:
+                bump(skill, level * PROJECT_EVIDENCE_FACTOR, year)
 
     # Anything else on the resume (skills list, summary, certifications).
     for skill in find_skills(text):
