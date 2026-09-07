@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+models/*.joblib
+node_modules/
+ui/dist/
+data/resumes.jsonl
+data/golden.jsonl
